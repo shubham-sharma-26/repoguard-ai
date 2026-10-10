@@ -1,0 +1,15 @@
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
+pydantic-settings==2.10.1
+sqlalchemy==2.0.41
+psycopg[binary]==3.2.9
+alembic==1.16.2
+httpx==0.28.1
+tree-sitter==0.25.2
+tree-sitter-python==0.23.6
+ruff==0.12.2
+bandit==1.8.6
+pytest==8.4.1
+pytest-cov==6.2.1
+httpcore==1.0.9
+anyio==4.15.1
