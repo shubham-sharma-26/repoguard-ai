@@ -12,6 +12,7 @@ from app.services.analyzer import _static_findings
 
 def test_controlled_snapshot_workflow_and_persistence(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("app.services.rag.configured_provider", lambda _settings: None)
+    monkeypatch.setattr("app.services.rag.configured_llm_provider", lambda _settings: None)
     db_path = tmp_path / "fixture.db"
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
     monkeypatch.setattr(database, "engine", engine)
@@ -104,13 +105,15 @@ def test_controlled_snapshot_workflow_and_persistence(tmp_path, monkeypatch) -> 
             f"/api/analyses/{analysis_id}/ask", json={"question": "Where is answer defined?"}
         ).json()
         assert answer["retrieval_mode"] == "lexical"
-        assert answer["generation_mode"] == "extractive_fallback"
+        assert answer["generation_mode"] == "local"
         assert answer["provider_status"] == "not_configured"
         assert answer["evidence_sufficient"] is True
+        assert "Function `answer`" in answer["answer"]
+        assert "return 42" not in answer["answer"]
         assert answer["citations"] == [
             {
                 "path": "src/example.py",
-                "start_line": 1,
+                "start_line": 3,
                 "end_line": 4,
                 "commit_sha": "a" * 40,
             }
@@ -119,9 +122,9 @@ def test_controlled_snapshot_workflow_and_persistence(tmp_path, monkeypatch) -> 
             f"/api/analyses/{analysis_id}/ask", json={"question": "Unrelated astronomy topic"}
         ).json()
         assert unknown["citations"] == []
-        assert "could not find enough" in unknown["answer"]
+        assert "does not provide enough evidence" in unknown["answer"]
         assert unknown["evidence_sufficient"] is False
-        assert unknown["generation_mode"] == "none"
+        assert unknown["generation_mode"] == "local"
 
         markdown = client.get(f"/api/analyses/{analysis_id}/report.md")
         assert markdown.status_code == 200

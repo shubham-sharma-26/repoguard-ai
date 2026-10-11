@@ -1,6 +1,6 @@
 # RepoGuard AI interview guide
 
-This guide describes the implementation in this repository as it exists. The project has not been deployed publicly. Live GitHub ingestion, live OpenAI requests, and PostgreSQL/pgvector operation are unverified in the current environment.
+This guide describes the implementation in this repository as it exists. The project has not been deployed publicly. Live GitHub ingestion, live OpenAI/Gemini requests, and PostgreSQL/pgvector operation are unverified in the current environment.
 
 ## 60-second project explanation
 
@@ -60,9 +60,13 @@ sequenceDiagram
 
 The fallback retriever tokenizes the question and ranks chunks from one `AnalysisResult`. If matching snapshot vectors and a configured embedding provider are available, semantic ranking is combined with lexical ranks. OpenAI generation is optional. The prompt marks repository excerpts as untrusted evidence and asks for integer citation IDs from supplied chunks. The server maps IDs to known sources, then the API checks path, exact snapshot SHA, and line bounds. Provider failure or invalid IDs results in an explicit extractive fallback. No relevant evidence results in an insufficient-evidence answer without citations.
 
-This is evidence-grounded retrieval, not guaranteed semantic verification. OpenAI has not been called live. PostgreSQL/pgvector has only mocked query-filter coverage, not a live database integration test.
+This is evidence-grounded retrieval, not guaranteed semantic verification. OpenAI and Gemini have mocked test coverage only; neither has been called live. PostgreSQL/pgvector has only mocked query-filter coverage, not a live database integration test.
 
 ## Testing strategy
+
+### Optional Gemini setup
+
+`RAG_PROVIDER=auto` selects Gemini when `GEMINI_API_KEY` is configured; `RAG_PROVIDER=gemini` selects it explicitly. Gemini uses Google's official `google-genai` SDK for generation only. It receives retrieved, redacted evidence after local snapshot retrieval and does not create embeddings. The default model is `gemini-3.1-flash-lite`; check current Google model availability and free-tier limits. Mocked tests cover success, errors, quota fallback, and snapshot citations. No live Gemini call was made.
 
 - Unit tests cover URL validation, archive path and file-type checks, Python symbols, subprocess limits, provider errors/bounds, retrieval isolation, prompt-injection handling, and citation rejection.
 - Transport tests use mocked DNS and controlled local TLS servers to check the actual dialed IP, Host header, TLS hostname behavior, redirects, timeouts, proxy isolation, and response limits.

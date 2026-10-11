@@ -1132,6 +1132,9 @@ footer span {
   padding: 12px;
   margin: 0 0 11px;
 }
+.answer-box.insufficient {
+  border-color: #4a4231;
+}
 .answer-label {
   display: flex;
   align-items: center;
@@ -1142,10 +1145,43 @@ footer span {
     monospace;
   letter-spacing: 0.6px;
 }
-.answer-box > p {
+.answer-body {
+  margin-top: 11px;
+}
+.answer-body p {
   color: #c4cedc;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.7;
+  margin: 0 0 8px;
+}
+.answer-body ul {
+  margin: 5px 0 9px;
+  padding-left: 19px;
+  color: #c4cedc;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.answer-body li + li {
+  margin-top: 4px;
+}
+.answer-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: #98a8bd;
+  font-size: 11px;
+}
+.citation-section {
+  margin-top: 10px;
+  border-top: 1px solid #293749;
+  padding-top: 8px;
+}
+.citation-section > strong {
+  color: #8293ad;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 .citations > .citation-link {
   display: flex;
@@ -1366,4 +1402,83 @@ footer span {
   .submit-card input {
     font-size: 10px;
   }
+}
+.profile-panel {
+  display: block;
+}
+.profile-facts {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+.profile-fact {
+  padding: 16px;
+  border: 1px solid var(--line, #e4e7ec);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+.profile-fact p {
+  line-height: 1.6;
+  margin: 10px 0;
+}
+.profile-fact-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.profile-fact-heading small {
+  margin-left: auto;
+  color: var(--muted, #667085);
+  text-transform: capitalize;
+}
+.citation-link {
+  display: inline-block;
+  margin: 4px 7px 0 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--accent, #2563eb);
+  background: #eff6ff;
+  cursor: pointer;
+  font:
+    12px ui-monospace,
+    monospace;
+}
+.muted-copy {
+  color: var(--muted, #667085);
+  line-height: 1.6;
+}
+.priority-badge {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #f2f4f7;
+  font-weight: 700;
+}
+.priority-badge.p1 {
+  color: #b42318;
+  background: #fef3f2;
+}
+.priority-badge.p2 {
+  color: #b54708;
+  background: #fffaeb;
+}
+.priority-badge.p3 {
+  color: #175cd3;
+  background: #eff8ff;
+}
+.diagram-detail {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line, #e4e7ec);
+  border-radius: 10px;
+}
+.diagram-detail pre {
+  overflow-x: auto;
+  padding: 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+.diagram-detail small {
+  color: var(--muted, #667085);
 }

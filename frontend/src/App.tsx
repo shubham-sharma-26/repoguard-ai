@@ -470,7 +470,9 @@ function AnalysisPage() {
       </div>
     );
   const tabs = [
-    ["overview", "Overview"],
+    ["overview", "Snapshot"],
+    ["project", "Project Overview"],
+    ["recommendations", "Recommended Improvements"],
     ["files", "Files"],
     ["symbols", "Code structure"],
     ["findings", "Findings"],
@@ -498,6 +500,7 @@ function AnalysisPage() {
         retrieval_mode: "lexical",
         generation_mode: "none",
         provider_status: "error",
+        provider_name: "local",
         provider_message: "The Q&A request failed.",
         evidence_sufficient: false,
       });
@@ -658,6 +661,135 @@ function AnalysisPage() {
           </div>
         </>
       )}
+      {tab === "project" && (
+        <section className="panel table-panel profile-panel">
+          <div className="panel-title">
+            <div>
+              <h3>Project Overview</h3>
+              <p>
+                Evidence extracted from this pinned snapshot · profile v
+                {analysis.project_profile.version}
+              </p>
+            </div>
+            <button className="outline-button" onClick={() => setTab("ask")}>
+              Ask a follow-up
+            </button>
+          </div>
+          {analysis.project_profile.facts.length === 0 ? (
+            <Empty>
+              No profile facts could be derived from the indexed files. Check
+              supported file coverage or ask about a specific symbol.
+            </Empty>
+          ) : (
+            <div className="profile-facts">
+              {analysis.project_profile.facts.map((fact, i) => (
+                <article className="profile-fact" key={`${fact.category}-${i}`}>
+                  <div className="profile-fact-heading">
+                    <span className="symbol-kind">
+                      {fact.category.replaceAll("_", " ")}
+                    </span>
+                    <small>{fact.basis}</small>
+                  </div>
+                  <p>{fact.statement}</p>
+                  {fact.evidence.map((ref, j) => (
+                    <button
+                      className="citation-link"
+                      key={`${ref.path}-${j}`}
+                      onClick={() => void openCitation(ref.path)}
+                    >
+                      {ref.path}:{ref.start_line}-{ref.end_line}
+                    </button>
+                  ))}
+                </article>
+              ))}
+              {analysis.project_profile.architecture_diagram && (
+                <details className="diagram-detail">
+                  <summary>Observed import relationships</summary>
+                  <pre>{analysis.project_profile.architecture_diagram}</pre>
+                  <small>
+                    Edges represent syntactically extracted imports between
+                    indexed modules, not a runtime call graph.
+                  </small>
+                </details>
+              )}
+            </div>
+          )}
+          <div className="notice">
+            <CircleHelp size={17} />
+            <span>
+              Documented claims are labeled “documented”; syntax and metadata
+              observations are labeled “observed” or “inferred”. The profile
+              does not execute repository code.
+            </span>
+          </div>
+        </section>
+      )}
+      {tab === "recommendations" && (
+        <section className="panel table-panel profile-panel">
+          <div className="panel-title">
+            <div>
+              <h3>Recommended Improvements</h3>
+              <p>
+                Review suggestions derived from saved analyzer output and
+                detected coverage.
+              </p>
+            </div>
+            <span className="count-badge">
+              {analysis.recommendations.length} suggestions
+            </span>
+          </div>
+          <p className="muted-copy">
+            P0 means an independently verified critical defect; this automated
+            profile does not assign P0. P1 and P2 reflect tool severity, while
+            P3 is a lower severity review item. Tool reports are not confirmed
+            vulnerabilities.
+          </p>
+          {analysis.recommendations.length === 0 ? (
+            <Empty>
+              No code-specific recommendations are supported by this snapshot.
+              This does not mean the repository has no issues.
+            </Empty>
+          ) : (
+            <div className="profile-facts">
+              {analysis.recommendations.map((item, i) => (
+                <article
+                  className="profile-fact recommendation"
+                  key={`${item.title}-${i}`}
+                >
+                  <div className="profile-fact-heading">
+                    <span
+                      className={`priority-badge ${item.priority.toLowerCase()}`}
+                    >
+                      {item.priority}
+                    </span>
+                    <strong>{item.title}</strong>
+                    <small>{item.category.replaceAll("_", " ")}</small>
+                  </div>
+                  <p>{item.problem}</p>
+                  <p>
+                    <b>Why it matters:</b> {item.why_it_matters}
+                  </p>
+                  <p>
+                    <b>Recommended change:</b> {item.recommended_change}
+                  </p>
+                  <p>
+                    <b>Verify:</b> {item.verification}
+                  </p>
+                  {item.evidence.map((ref, j) => (
+                    <button
+                      className="citation-link"
+                      key={`${ref.path}-${j}`}
+                      onClick={() => void openCitation(ref.path)}
+                    >
+                      {ref.path}:{ref.start_line}-{ref.end_line}
+                    </button>
+                  ))}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
       {tab === "files" && (
         <div className="panel table-panel">
           <div className="panel-title">
@@ -756,27 +888,38 @@ function AnalysisPage() {
                   <Bot size={18} /> Ask about this repository
                 </h3>
                 <p>
-                  Optional embeddings and generation work on this pinned
-                  snapshot. Source excerpts are sent to OpenAI only when its
-                  provider key is configured.
+                  Retrieval is restricted to this pinned snapshot. Relevant,
+                  redacted excerpts are sent to the configured provider only
+                  when you ask a question; local fallback needs no key.
                 </p>
               </div>
               <span className="local-pill">
                 <span /> {analysis.embedding_status.toUpperCase()} EMBEDDINGS
               </span>
             </div>
-            <div className="chat-empty">
-              <div className="bot-orb">
-                <Sparkles size={21} />
+            {!answer && !asking && (
+              <div className="chat-empty">
+                <div className="bot-orb">
+                  <Sparkles size={21} />
+                </div>
+                <strong>Ask a question about the code</strong>
+                <p>
+                  Try “Where are the main classes defined?” or “Find code
+                  related to authentication.”
+                </p>
               </div>
-              <strong>Ask a question about the code</strong>
-              <p>
-                Try “Where are the main classes defined?” or “Find code related
-                to authentication.”
-              </p>
-            </div>
+            )}
+            {asking && (
+              <div className="answer-loading" role="status">
+                <LoaderCircle className="spin" size={16} />
+                Searching this saved repository snapshot…
+              </div>
+            )}
             {answer && (
-              <div className="answer-box">
+              <div
+                className={`answer-box${answer.evidence_sufficient ? "" : " insufficient"}`}
+                aria-live="polite"
+              >
                 <div className="answer-label">
                   <Sparkles size={14} /> REPOGUARD RESPONSE
                 </div>
@@ -786,7 +929,16 @@ function AnalysisPage() {
                     Generation: {answer.generation_mode.replaceAll("_", " ")}
                   </span>
                   <span>
-                    Provider: {answer.provider_status.replaceAll("_", " ")}
+                    Provider:{" "}
+                    {answer.generation_mode === "none"
+                      ? "Answer rejected · citations not trusted"
+                      : answer.provider_status === "ready"
+                        ? answer.generation_mode === "llm"
+                          ? `${answer.provider_name === "custom" ? "AI" : answer.provider_name} used`
+                          : `${answer.provider_name === "custom" ? "AI" : answer.provider_name} configured · local answer`
+                        : answer.provider_status === "error"
+                          ? `${answer.provider_name === "custom" ? "AI provider" : answer.provider_name} unavailable · local fallback`
+                          : "Local fallback"}
                   </span>
                   {!answer.evidence_sufficient && (
                     <span>Insufficient evidence</span>
@@ -795,23 +947,26 @@ function AnalysisPage() {
                 <small className="provider-message">
                   {answer.provider_message}
                 </small>
-                <p>{answer.answer}</p>
+                <AnswerBody text={answer.answer} />
                 {answer.citations.length > 0 && (
-                  <div className="citations">
-                    {answer.citations.map((c, i) => (
-                      <button
-                        type="button"
-                        className="citation-link"
-                        key={`${c.path}-${c.start_line}-${i}`}
-                        onClick={() => void openCitation(c.path)}
-                      >
-                        <FileCode2 size={14} />
-                        <code>
-                          {c.path}:{c.start_line}-{c.end_line}
-                        </code>
-                        <small>{c.commit_sha.slice(0, 8)}</small>
-                      </button>
-                    ))}
+                  <div className="citation-section">
+                    <strong>Supporting sources</strong>
+                    <div className="citations">
+                      {answer.citations.map((c, i) => (
+                        <button
+                          type="button"
+                          className="citation-link"
+                          key={`${c.path}-${c.start_line}-${i}`}
+                          onClick={() => void openCitation(c.path)}
+                        >
+                          <FileCode2 size={14} />
+                          <code>
+                            {c.path}:{c.start_line}-{c.end_line}
+                          </code>
+                          <small>{c.commit_sha.slice(0, 8)}</small>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {citationError && (
@@ -891,6 +1046,36 @@ function Empty({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+function AnswerBody({ text }: { text: string }) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const blocks: React.ReactNode[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (lines[index].startsWith("- ")) {
+      const items: string[] = [];
+      while (index < lines.length && lines[index].startsWith("- ")) {
+        items.push(lines[index].slice(2));
+        index += 1;
+      }
+      blocks.push(
+        <ul key={`list-${index}`}>
+          {items.map((item, itemIndex) => (
+            <li key={`${index}-${itemIndex}`}>{item}</li>
+          ))}
+        </ul>,
+      );
+    } else {
+      blocks.push(<p key={`paragraph-${index}`}>{lines[index]}</p>);
+      index += 1;
+    }
+  }
+  return <div className="answer-body">{blocks}</div>;
+}
+
 function FileList({
   analysisId,
   files,

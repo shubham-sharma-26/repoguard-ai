@@ -672,7 +672,9 @@ async def analyze_repository(raw_url: str) -> AnalysisResult:
         except (ProviderError, TimeoutError) as exc:
             embedding_status = "error"
             logger.warning("Repository embedding failed (%s)", type(exc).__name__)
-    return AnalysisResult(
+    from app.services.repository_profile import enrich_analysis
+
+    result = AnalysisResult(
         id=str(uuid.uuid4()),
         owner=owner,
         name=name,
@@ -700,3 +702,4 @@ async def analyze_repository(raw_url: str) -> AnalysisResult:
         duration_ms=int((time.monotonic() - started) * 1000),
         embedding_status=embedding_status,
     )
+    return enrich_analysis(result)

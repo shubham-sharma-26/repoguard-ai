@@ -49,6 +49,40 @@ class Chunk(BaseModel):
     embedding_model: str | None = None
 
 
+class ProfileEvidence(BaseModel):
+    path: str
+    start_line: int
+    end_line: int
+
+
+class ProfileFact(BaseModel):
+    category: Literal[
+        "purpose", "users", "feature", "stack", "entry_point", "module", "relationship",
+        "api", "data", "testing", "ci", "deployment", "documentation", "security",
+        "limitation", "unknown",
+    ]
+    statement: str
+    basis: Literal["documented", "observed", "inferred", "tool_report", "unknown"]
+    evidence: list[ProfileEvidence] = Field(default_factory=list)
+
+
+class ProjectProfile(BaseModel):
+    version: int = 0
+    facts: list[ProfileFact] = Field(default_factory=list)
+    architecture_diagram: str | None = None
+
+
+class ImprovementRecommendation(BaseModel):
+    priority: Literal["P0", "P1", "P2", "P3"]
+    category: Literal["confirmed_defect", "potential_risk", "missing_capability", "best_practice"]
+    title: str
+    problem: str
+    why_it_matters: str
+    recommended_change: str
+    verification: str
+    evidence: list[ProfileEvidence] = Field(default_factory=list)
+
+
 class AnalysisResult(BaseModel):
     id: str
     owner: str
@@ -70,6 +104,8 @@ class AnalysisResult(BaseModel):
     analysis_coverage: dict[str, str] = Field(default_factory=dict)
     duration_ms: int
     embedding_status: str = "not_configured"
+    project_profile: ProjectProfile = Field(default_factory=ProjectProfile)
+    recommendations: list[ImprovementRecommendation] = Field(default_factory=list)
 
 
 class AnalysisSummary(BaseModel):
@@ -105,6 +141,8 @@ class AnalysisView(BaseModel):
     analysis_coverage: dict[str, str] = Field(default_factory=dict)
     duration_ms: int
     embedding_status: str = "not_configured"
+    project_profile: ProjectProfile = Field(default_factory=ProjectProfile)
+    recommendations: list[ImprovementRecommendation] = Field(default_factory=list)
 
 
 class QuestionRequest(BaseModel):
@@ -123,7 +161,8 @@ class Answer(BaseModel):
     citations: list[Citation]
     mode: str = "lexical"
     retrieval_mode: str = "lexical"
-    generation_mode: str = "extractive_fallback"
+    generation_mode: str = "local"
     provider_status: str = "not_configured"
+    provider_name: Literal["gemini", "openai", "local", "custom"] = "local"
     provider_message: str = "AI provider is not configured."
     evidence_sufficient: bool = False

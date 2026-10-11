@@ -20,12 +20,12 @@ flowchart LR
     RAG --> Snapshot
     Snapshot --> SQLite[(SQLite default)]
     Snapshot -. optional .-> PG[(PostgreSQL + optional pgvector)]
-    RAG -->|only with an explicitly configured key| OpenAI[OpenAI API]
+    RAG -->|only with an explicitly selected/configured key| Provider[Optional Gemini or OpenAI API]
     API --> Reports[Validated citations and Markdown / JSON reports]
     Reports --> Browser
 ```
 
-The default workflow is local lexical retrieval on SQLite. PostgreSQL/pgvector and OpenAI are optional and are not prerequisites for controlled fixture tests.
+The default workflow is local lexical retrieval on SQLite. PostgreSQL/pgvector and external model providers are optional and are not prerequisites for controlled fixture tests.
 
 ## Technology stack
 
@@ -46,7 +46,7 @@ The default workflow is local lexical retrieval on SQLite. PostgreSQL/pgvector a
 - Records when static-analysis coverage is truncated at that 100-file limit.
 - Persists complete analysis snapshots/history using SQLite by default or PostgreSQL when configured.
 - Provides file search and bounded source excerpts, filtered findings, lexical/semantic/hybrid Q&A with snapshot-validated citations, and Markdown/JSON exports.
-- Includes optional OpenAI embeddings and chat generation behind provider interfaces. With no configured key, Q&A uses local lexical retrieval and explicit extractive fallback answers.
+- Includes optional OpenAI embeddings/chat and Gemini chat behind the existing provider interfaces. Without an API key, local Q&A ranks evidence from README/docs, dependency manifests, file paths, extracted symbols, source chunks, and saved findings. It attributes documentation statements, labels structural inferences, cites validated snapshot lines, and explains evidence gaps. This deterministic synthesis is evidence selection and templating, not a general-purpose local language model; it cannot reliably infer arbitrary runtime behavior.
 - Includes a responsive React/TypeScript dashboard and FastAPI OpenAPI documentation.
 
 ### Verification status
@@ -58,6 +58,7 @@ The default workflow is local lexical retrieval on SQLite. PostgreSQL/pgvector a
 | GitHub transport security behavior | Verified by mocked DNS and controlled local TLS regression tests |
 | Live public GitHub analysis | Completed once under approved outbound access; current restricted shell cannot connect at pinned TCP |
 | OpenAI embedding/chat request | Mock-tested only; no credential or live/billable call used |
+| Gemini SDK generation | Mock-tested only; no Gemini key or live request used |
 | PostgreSQL/pgvector | Query scoping mock-tested; no server/extension available |
 | Docker Compose runtime | Unavailable; Docker engine pipe not present |
 
@@ -66,8 +67,9 @@ Controlled fixtures establish local workflow behavior. A separate approved run c
 ## Scope and limitations
 
 - Analysis is synchronous. Redis/RQ jobs, progress polling, cancellation, and retries are not implemented.
-- Python uses AST symbol extraction; JavaScript/TypeScript use Tree-sitter syntax extraction. Neither parser executes analyzed source. Other languages are classified by extension and chunked lexically. No JavaScript/TypeScript static-analysis engine is configured yet, and no complete call graph is produced. OpenAI embeddings/chat and PostgreSQL pgvector are optional and remain unverified against live provider/database services.
-- Semantic retrieval and LLM generation require `OPENAI_API_KEY` and are disabled by default. Configuring the key opts in to sending bounded source chunks and relevant excerpts to OpenAI; review the [RAG and privacy notes](docs/RAG_PIPELINE.md) before enabling it.
+- Python uses AST symbol extraction; JavaScript/TypeScript use Tree-sitter syntax extraction. Neither parser executes analyzed source. Other languages are classified by extension and chunked lexically. No JavaScript/TypeScript static-analysis engine is configured yet, and no complete call graph is produced. OpenAI embeddings/chat, Gemini generation, and PostgreSQL pgvector are optional; live model/database integrations are unverified.
+- Set `RAG_PROVIDER=gemini` and `GEMINI_API_KEY` to opt into Gemini generation. `GEMINI_MODEL` defaults to `gemini-3.1-flash-lite`, listed as free tier for text input/output in Google's current pricing documentation. Free-tier quotas and model availability can change; no paid provider fallback is attempted. If the Google project has billing enabled, over-quota billing may still be possible according to Google's policy, so monitor usage and avoid enabling billing if you require a hard no-charge setup. Review the [RAG and privacy notes](docs/RAG_PIPELINE.md) first.
+- `RAG_PROVIDER=auto` (default) selects Gemini when its key exists, otherwise OpenAI when its key exists, otherwise local mode. `RAG_PROVIDER=local` disables providers; `openai` and `gemini` explicitly select one. Gemini is generation-only and does not embed repository contents. OpenAI embeddings/chat remain as before when OpenAI is selected. Provider keys are read by the backend only and never returned to the frontend.
 - PostgreSQL uses pgvector search when its extension is available. SQLite remains supported; it can compare stored vectors locally when embeddings exist and always retains the lexical fallback. The local PostgreSQL/pgvector path has not been tested against a running database in this environment.
 - Findings are local Ruff/Bandit output. There is no AI remediation, authentication, or multi-user isolation; keep the service on a trusted local machine.
 - Compose includes PostgreSQL with pgvector. Analysis snapshots remain JSON records; when embeddings are enabled, an optional pgvector side table supports semantic ranking. Docker runtime was unavailable during the earlier environment check.
@@ -85,7 +87,14 @@ Set-Location backend
 ..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
-The backend uses `backend/repoguard.db` SQLite when `DATABASE_URL` is unset. For local-only Q&A, leave `OPENAI_API_KEY` blank. To enable optional OpenAI embeddings and generation, set the key in the backend environment or an untracked `backend/.env`; model and resource-limit variables are listed in `.env.example`. This sends bounded repository excerpts to OpenAI. In another terminal:
+The backend uses `backend/repoguard.db` SQLite when `DATABASE_URL` is unset. For local-only Q&A, leave both provider keys blank or set `RAG_PROVIDER=local`. To enable Gemini, create a backend-only environment file and set `GEMINI_API_KEY` there:
+
+```powershell
+Copy-Item .env.example backend\.env
+notepad backend\.env
+```
+
+Keep `RAG_PROVIDER=gemini` (or `auto`). Source excerpts and the question are sent to Google only for Q&A generation; Gemini is not used for embeddings. The default `gemini-3.1-flash-lite` currently appears in Google's [model documentation](https://ai.google.dev/gemini-api/docs/models) and [free-tier pricing table](https://ai.google.dev/gemini-api/docs/pricing); availability and quotas can change. Free-tier content may be used to improve Google products. In another terminal:
 
 ```powershell
 Set-Location frontend
@@ -178,6 +187,11 @@ No verified browser screenshots are included yet. Capture these for a portfolio 
 - The Alembic baseline migration was applied and inspected in a new temporary SQLite database. The existing application database was not migrated, reset, or overwritten.
 - Final checks: `..\\.venv\\Scripts\\python.exe -m pytest -q` passed (**92 tests**, six deprecation/configuration warnings); `..\\.venv\\Scripts\\python.exe -m ruff check app tests` passed; `npm.cmd exec -- prettier --check src` passed; `npm.cmd run build` passed TypeScript and Vite production build.
 - Docker CLI was available but the daemon pipe was not; no containers were started. PostgreSQL/pgvector was not configured or connected, so only mocked pgvector query isolation and SQLite fallback were verified. OpenAI/provider behavior remains mock-tested only. Live GitHub remains blocked at pinned TCP as documented above.
+
+### Repository Q&A update verification (2026-10-11)
+
+- The current no-key path answers supported symbol-location, file line-count, and saved-finding questions using metadata from the selected snapshot. Unsupported interpretation returns explicit uncertainty and validated supporting locations when available; it does not turn retrieved source into answer prose.
+- Earlier checks for the first answer-quality update: **120 backend tests passed** (five upstream warnings). The broader local synthesis update and its final results are recorded below in [Project status](PROJECT_STATUS.md).
 - To deliberately opt in to external source processing, configure `OPENAI_API_KEY` in the backend environment or an untracked `backend/.env`, then restart the backend. This explicit configuration sends bounded source chunks and relevant excerpts/questions to OpenAI. Do not configure the key unless that sharing is intended.
 
 ## Final quality audit (2026-10-11)
@@ -215,7 +229,7 @@ Backend terminal:
 
 ```powershell
 Set-Location 'C:\Users\Hp\OneDrive\Desktop\RepoGuard AI — Intelligent GitHub Repository Analyzer\backend'
-..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
 ```
 
 Frontend terminal:
@@ -225,7 +239,7 @@ Set-Location 'C:\Users\Hp\OneDrive\Desktop\RepoGuard AI — Intelligent GitHub R
 npm.cmd run dev -- --host 127.0.0.1 --port 5174 --strictPort
 ```
 
-Then open `http://127.0.0.1:5174`, check `http://127.0.0.1:8000/api/health` and `/api/readiness`, submit `https://github.com/pallets/itsdangerous` (no `.git` required), and verify the commit, files, findings, Q&A citations, reports, and history refresh. If submission fails, inspect the backend terminal from that same run; don't infer from a different shell's curl test.
+Then open `http://127.0.0.1:5174`, check `http://127.0.0.1:8001/api/health` and `/api/readiness`, submit `https://github.com/pallets/itsdangerous` (no `.git` required), and verify the commit, files, findings, Q&A citations, reports, and history refresh. If submission fails, inspect the backend terminal from that same run; don't infer from a different shell's curl test.
 
 ## Architecture
 
@@ -238,3 +252,9 @@ Then open `http://127.0.0.1:5174`, check `http://127.0.0.1:8000/api/health` and 
 See [SECURITY.md](SECURITY.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [PROJECT_STATUS.md](PROJECT_STATUS.md).
 See [docs/RAG_PIPELINE.md](docs/RAG_PIPELINE.md) for provider setup, retrieval, storage, and privacy details.
 See [docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md) for a code-grounded portfolio walkthrough and technical Q&A.
+
+### Snapshot profile and evidence limits
+
+Each analysis now stores a deterministic repository profile derived from its pinned file manifest, indexed text chunks, extracted Python/JavaScript/TypeScript symbols and imports, tool findings, and analyzer coverage. The profile labels statements as documented, observed, inferred, or tool-reported and carries source file/line references when available. The dashboard exposes this as **Project Overview** and **Recommended Improvements**; the Markdown and JSON reports include the persisted profile. Syntax-level import edges are not a runtime call graph. README statements remain documented claims until corroborated by implementation. API/database/security indicators are static pattern observations, not proof of complete or effective behavior.
+
+Question retrieval now classifies common intents and weights symbols, implementation paths, manifests, findings, and docs accordingly. Generic docs and lockfiles are downweighted or excluded for implementation questions without topic evidence. Local generation remains deterministic lexical evidence synthesis; it is not semantic understanding. Optional OpenAI generation is used only when configured. Repository code is never executed.

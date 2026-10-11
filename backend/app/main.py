@@ -175,7 +175,12 @@ def _load_or_404(analysis_id: str) -> AnalysisResult:
     payload = get_analysis(analysis_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    return AnalysisResult.model_validate(payload)
+    result = AnalysisResult.model_validate(payload)
+    if result.project_profile.version < 1:
+        from app.services.repository_profile import enrich_analysis
+
+        result = enrich_analysis(result)
+    return result
 
 
 @app.get("/api/analyses/{analysis_id}", response_model=AnalysisView)
@@ -306,6 +311,26 @@ def markdown_report(analysis_id: str) -> Response:
     rows.extend(f"- {name}: {count} files" for name, count in sorted(result.languages.items()))
     rows.extend(["", "## Structure", "", f"- Extracted symbols: {len(result.symbols)}"])
     rows.extend(f"- {kind.title()}: {count}" for kind, count in sorted(symbol_kinds.items()))
+    rows.extend(["", "## Project overview", ""])
+    if result.project_profile.facts:
+        for fact in result.project_profile.facts[:60]:
+            citations = ", ".join(
+                f"`{escape_markdown(ref.path)}:{ref.start_line}-{ref.end_line}`"
+                for ref in fact.evidence
+            )
+            suffix = f" Evidence: {citations}." if citations else ""
+            rows.append(f"- **{escape_markdown(fact.category.replace('_', ' ').title())} ({fact.basis}):** {escape_markdown(fact.statement)}{suffix}")
+    else:
+        rows.append("No profile facts could be derived from this snapshot.")
+    rows.extend(["", "## Recommended improvements", ""])
+    if result.recommendations:
+        for item in result.recommendations[:60]:
+            refs = ", ".join(f"`{escape_markdown(ref.path)}:{ref.start_line}-{ref.end_line}`" for ref in item.evidence)
+            suffix = f" Evidence: {refs}." if refs else ""
+            rows.append(f"- **{item.priority} · {escape_markdown(item.title)}** ({item.category.replace('_', ' ')}): {escape_markdown(item.recommended_change)}{suffix}")
+        rows.append("\nPriorities are review guidance; analyzer findings are not automatically confirmed defects or vulnerabilities.")
+    else:
+        rows.append("No code-specific recommendations were supported by the stored analyzer output.")
     rows.extend(["", "## Tool versions", ""])
     rows.extend(
         f"- {escape_markdown(tool)}: `{escape_markdown(version)}`"

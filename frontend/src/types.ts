@@ -23,6 +23,31 @@ export type Symbol = {
   end_line: number;
   summary: string;
 };
+export type ProfileEvidence = {
+  path: string;
+  start_line: number;
+  end_line: number;
+};
+export type ProfileFact = {
+  category: string;
+  statement: string;
+  basis: "documented" | "observed" | "inferred" | "tool_report" | "unknown";
+  evidence: ProfileEvidence[];
+};
+export type ImprovementRecommendation = {
+  priority: "P0" | "P1" | "P2" | "P3";
+  category:
+    | "confirmed_defect"
+    | "potential_risk"
+    | "missing_capability"
+    | "best_practice";
+  title: string;
+  problem: string;
+  why_it_matters: string;
+  recommended_change: string;
+  verification: string;
+  evidence: ProfileEvidence[];
+};
 export type Analysis = {
   id: string;
   owner: string;
@@ -43,6 +68,12 @@ export type Analysis = {
   analysis_coverage: Record<string, string>;
   duration_ms: number;
   embedding_status: string;
+  project_profile: {
+    version: number;
+    facts: ProfileFact[];
+    architecture_diagram?: string | null;
+  };
+  recommendations: ImprovementRecommendation[];
 };
 export type AnalysisSummary = Pick<
   Analysis,
@@ -72,8 +103,9 @@ export type QuestionAnswer = {
   }[];
   mode: string;
   retrieval_mode: "lexical" | "semantic" | "hybrid";
-  generation_mode: "llm" | "extractive_fallback" | "none";
+  generation_mode: "llm" | "local" | "none";
   provider_status: "ready" | "not_configured" | "error";
+  provider_name: "gemini" | "openai" | "local" | "custom";
   provider_message: string;
   evidence_sufficient: boolean;
 };

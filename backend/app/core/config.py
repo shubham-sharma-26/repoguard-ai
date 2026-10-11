@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,6 +11,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     github_token: str | None = None
     openai_api_key: str | None = Field(default=None, max_length=500)
+    gemini_api_key: str | None = Field(default=None, max_length=500)
+    gemini_model: str = Field(default="gemini-3.1-flash-lite", min_length=1, max_length=200)
+    rag_provider: Literal["auto", "local", "openai", "gemini"] = "auto"
     rag_embedding_model: str = Field(default="text-embedding-3-small", min_length=1, max_length=200)
     rag_chat_model: str = Field(default="gpt-4o-mini", min_length=1, max_length=200)
     rag_embedding_dimensions: int = Field(default=1536, ge=1, le=4096)

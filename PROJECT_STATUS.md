@@ -2,6 +2,21 @@
 
 Updated: 2026-10-11
 
+## Repository Q&A answer quality update
+
+- Replaced raw-source fallback responses with deterministic, question-aware answers built from the selected snapshot's symbols, file line counts, and persisted findings. Questions outside these local fact types receive a cited uncertainty response; raw retrieved source is shown only in the separate source preview.
+- Kept optional OpenAI generation and embedding behind the existing provider interface. The provider prompt now explicitly requests concise explanations instead of source excerpts. Invalid, partial, duplicated, or fabricated citation IDs cause local uncertainty fallback.
+- The API revalidates citation paths, exact commit identity, and source line bounds. The Q&A panel renders paragraphs/lists, separate supporting-source links, a loading state, and a visible insufficient-evidence state.
+- Added regressions for structure locations, largest source files by line count, static-analysis findings, unanswerable and provider-error cases, provider-disabled behavior, invalid citations, and snapshot isolation.
+- Verification for this update: **120 backend tests passed** (five upstream deprecation warnings); Ruff and `pip check` passed; Prettier, TypeScript, and the Vite production build passed. Providers were mock-tested only; no live AI API calls were made.
+
+## Broader local Q&A evidence synthesis
+
+- Added deterministic evidence ranking over README/documentation lines, dependency manifests, file paths, extracted symbols and summaries, indexed source chunks, and persisted findings. Intent vocabulary expands varied wording for purpose, architecture, features, authentication, APIs/databases, dependencies, security, and improvements.
+- Local answers attribute claims to project documentation or extracted records, distinguish structural observations from complete runtime behavior, report findings as potential issues, and name missing evidence when the snapshot is insufficient. Requirements and `pyproject.toml` / `package.json` dependency metadata are read without executing repository files.
+- Supporting paths and ranges are validated against the supplied analysis snapshot and commit. The approach is deterministic retrieval and templates, not a local LLM; complex behavior explanations remain uncertain unless the optional provider is configured.
+- New fixture tests cover purpose, architecture, features, auth/API implementation locations, dependency manifests, security wording, insufficient evidence, invalid citations, credential redaction, and broad-answer snapshot isolation. Verification: **136 backend tests passed** with five upstream deprecation warnings; Ruff and `pip check` passed; Prettier, TypeScript, and the production build passed. AI provider calls were mocked; no live GitHub, OpenAI, or PostgreSQL integration was exercised for this update.
+
 ## JavaScript/TypeScript structure and coverage update
 
 - Added syntax-only Tree-sitter extraction for JavaScript, JSX, TypeScript, and TSX functions, classes, methods, and imports. Existing Python AST extraction remains in place. Unsupported or malformed syntax yields no symbols without evaluating source.
@@ -17,7 +32,7 @@ Updated: 2026-10-11
 - Implemented FastAPI health/readiness, repository analysis, compact snapshot history, files, filtered findings, Q&A, and escaped Markdown/JSON reports.
 - Added GitHub URL validation, commit pinning, constrained API/archive access, bounded ZIP processing, Python AST symbols, lexical chunks/retrieval, and Ruff/Bandit integration.
 - Added SQLAlchemy persistence (SQLite default; PostgreSQL configurable), Alembic migration, Docker Compose, CI, security docs, and regression tests.
-- Implemented optional provider-backed embeddings and OpenAI chat generation with local lexical/extractive fallback, citation validation, hybrid retrieval, and frontend retrieval/provider status.
+- Implemented optional provider-backed embeddings and OpenAI chat generation with deterministic local answers for indexed facts, uncertainty for unsupported local questions, citation validation, hybrid retrieval, and frontend retrieval/provider status.
 - Added `PinnedGitHubTransport` for DNS-answer validation and IP-literal socket connections to the two fixed GitHub service hosts; API and archive traffic bypass environment proxies, redirects are manually constrained, TLS verification remains enabled, and connections are not reused.
 - Tightened repository URL parsing to reject query strings, fragments, and ambiguous repeated path separators. Bounded GitHub metadata JSON responses to 1 MB.
 - Bound Docker Compose published ports to loopback.
@@ -64,7 +79,7 @@ Updated: 2026-10-11
 - Added separate embedding and LLM provider protocols and an OpenAI implementation using a fixed HTTPS API origin and the existing DNS-pinned transport, with TLS verification, disabled redirects/proxies, response-size caps, and safe error categories. No API key is required by tests or by the local lexical workflow.
 - With `OPENAI_API_KEY` configured, analysis embeds at most 256 bounded source chunks per snapshot in batches; vectors and model labels are persisted alongside each chunk. Embedding failures are logged by exception category and do not fail repository analysis.
 - Q&A performs lexical ranking plus semantic cosine ranking where query and snapshot embeddings are available, and reciprocal-rank fusion when both have matches. PostgreSQL attempts a dimension-specific pgvector table, scoped metadata index, and cosine HNSW index; the query filters by analysis ID, exact commit SHA, and embedding model. SQLite uses vectors stored in the loaded snapshot and retains lexical fallback.
-- Optional generation receives bounded retrieved evidence and a prompt that treats repository text as untrusted. It must return citation IDs from the retrieved set; unsupported IDs or provider errors cause a labeled extractive fallback. The API also verifies citation paths, commit SHA, and line bounds.
+- Optional generation receives bounded retrieved evidence and a prompt that treats repository text as untrusted. It must return citation IDs from the retrieved set; unsupported IDs or provider errors cause a deterministic local uncertainty response. The API also verifies citation paths, commit SHA, and line bounds.
 - Frontend Q&A labels retrieval mode, generation mode, provider status, and insufficient evidence. Citation buttons load source previews from the same stored analysis.
 - Tests run without internet or paid credentials. The OpenAI API was not called. The local PostgreSQL/pgvector engine was unavailable, so pgvector DDL/query execution remains unverified; SQL snapshot/commit/model filter behavior is mocked in a regression test.
 - Verification for this milestone: `..\.venv\Scripts\python.exe -m pytest -q tests` passed (**89 tests, 5 upstream deprecation warnings**); `..\.venv\Scripts\python.exe -m ruff check app tests` passed; `npm.cmd exec -- prettier --check src` passed; `npm.cmd run build` passed TypeScript and Vite production build.
@@ -73,8 +88,8 @@ Updated: 2026-10-11
 ## Known issues / scope boundaries
 
 - Synchronous API analysis only; Redis/RQ jobs are absent.
-- Optional OpenAI embeddings/generation are implemented but were not exercised against the live provider; the local default remains lexical retrieval with extractive answers.
-- Python AST symbols only; other languages use extension classification and text chunks.
+- Optional OpenAI embeddings/generation are implemented but were not exercised against the live provider; the no-key default uses lexical retrieval and deterministic snapshot metadata answers, with uncertainty for questions it cannot answer safely.
+- Python AST plus JavaScript/TypeScript syntax symbols are supported; other languages use extension classification and text chunks. Static analysis currently covers Python only.
 - pgvector storage/query is attempted when PostgreSQL is active, but was not exercised against a running PostgreSQL/pgvector service in this environment.
 - SQLAlchemy creates tables at startup; the Alembic baseline exists but migrations are not wired into container startup.
 - No authentication; deployment should remain local/trusted.
@@ -141,3 +156,19 @@ Updated: 2026-10-11
 2. When an isolated PostgreSQL/pgvector service is available, verify migrations and actual vector insert/query isolation against a disposable test database.
 3. Only with a deliberate operator key and approval for any possible charges, run an optional live OpenAI test after reviewing data-sharing implications.
 4. Add a frontend test runner/browser workflow for history/API failure states and capture genuine local UI screenshots. Keep authentication and access control as prerequisites to any network exposure.
+
+## Repository understanding profile update (2026-10-11)
+
+- Added a versioned, persisted profile synthesized from snapshot README/docs, language/config manifests, file metadata, extracted symbols/imports, scanner output, and coverage. It includes evidence tags and source references, plus a syntax-level module relationship diagram only when import edges resolve to indexed modules.
+- Added lightweight route, database dependency, security construct, test/CI/deployment path, and feature-section observations. These use static patterns and do not prove runtime behavior or control effectiveness.
+- Added question-intent weighted lexical chunk retrieval, generic README suppression for implementation questions, and lockfile downranking. Existing local fallback/provider and citation validation paths remain in use.
+- Added Project Overview and Recommended Improvements tabs, plus the profile in JSON/Markdown reports. Scanner-derived suggestions remain review items; no automated P0/confirmed defect is produced.
+- Regression coverage includes profile evidence, syntactic relationships, recommendations, and a README-versus-auth-source retrieval case. Full current verification: 139 backend tests passed with five upstream deprecation warnings; Ruff and pip check passed; Prettier check, TypeScript/Vite production build passed. GitHub/OpenAI/PostgreSQL live integration was not exercised in this change.
+
+## Optional Gemini provider update (2026-10-11)
+
+- Added the official Google `google-genai` SDK (pinned `2.29.0`) as an optional backend dependency. The configured Gemini model defaults to `gemini-3.1-flash-lite`; Google's current pricing docs list standard text input/output in the free tier. Model access, quotas, free-tier rules, and billing terms can change.
+- Provider selection is `RAG_PROVIDER=auto|local|openai|gemini`. Auto prefers configured Gemini, then configured OpenAI, then local mode. A provider error or quota limit falls back locally and never switches to a different remote provider. Gemini is generation-only; it does not modify the current OpenAI embedding workflow.
+- The backend sends only retrieved, redacted, bounded snapshot evidence plus the question. It validates generated citation IDs against retrieved chunks and relies on the existing API path/commit/line validation. Provider name and readiness are exposed without credentials.
+- `.env.example` has blank key placeholders; Git ignores root and nested `.env` files. No key was added or live Gemini call made. Mock tests cover SDK request/output bounds, missing key, invalid output, quota/timeouts, fallback, and citation scoping.
+- Verification after integration: **148 backend tests passed** with five upstream deprecation warnings; Ruff, `pip check`, frontend Prettier, TypeScript/Vite production build, and `git diff --check` passed. Gemini behavior was verified with mocked SDK calls and a local SDK import/client-construction check only; no credential, live Gemini request, or quota consumption was used.
