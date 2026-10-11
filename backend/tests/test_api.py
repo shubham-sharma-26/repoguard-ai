@@ -70,6 +70,19 @@ def test_repository_error_remains_distinct_from_connectivity(monkeypatch) -> Non
     assert "Repository was not found" in response.json()["detail"]
 
 
+def test_unexpected_analysis_exception_does_not_log_exception_text(monkeypatch, caplog) -> None:
+    async def fail(_url):
+        raise RuntimeError("sentinel-secret-from-untrusted-error")
+
+    monkeypatch.setattr("app.main.analyze_repository", fail)
+    response = client.post(
+        "/api/analyses", json={"url": "https://github.com/octocat/Hello-World"}
+    )
+    assert response.status_code == 502
+    assert "sentinel-secret-from-untrusted-error" not in caplog.text
+    assert "Repository analysis failed (RuntimeError)" in caplog.text
+
+
 def test_api_responses_include_security_headers() -> None:
     response = client.get("/api/health")
     assert response.headers["x-content-type-options"] == "nosniff"
@@ -126,10 +139,17 @@ def _analysis_payload() -> dict:
                 "start_line": 1,
                 "end_line": 1,
                 "text": "print('hello')",
+                "embedding": [0.5, 0.5],
+                "embedding_model": "test-model",
             }
         ],
         "skipped": [],
         "tool_versions": {"ruff": "0.12.2", "bandit": "1.8.6"},
+        "analysis_coverage": {
+            "Python": "analyzed",
+            "JavaScript": "not_analyzed",
+            "TypeScript": "not_analyzed",
+        },
         "duration_ms": 123,
     }
 
@@ -139,15 +159,15 @@ def test_file_preview_is_pinned_and_rejects_traversal(monkeypatch) -> None:
     response = client.get("/api/analyses/snapshot-1/file-content?path=main.py")
     assert response.status_code == 200
     assert response.json()["chunks"][0]["text"] == "print('hello')"
+    assert "embedding" not in response.json()["chunks"][0]
     unsafe = client.get("/api/analyses/snapshot-1/file-content?path=..%2Fsecrets.txt")
     assert unsafe.status_code == 422
 
 
 def test_ask_drops_citations_from_another_commit(monkeypatch) -> None:
     monkeypatch.setattr("app.main.get_analysis", lambda _analysis_id: _analysis_payload())
-    monkeypatch.setattr(
-        "app.main.answer_question",
-        lambda _analysis, _question: {
+    async def fake_answer(_analysis, _question):
+        return {
             "answer": "Untrusted citation",
             "citations": [
                 {
@@ -158,13 +178,52 @@ def test_ask_drops_citations_from_another_commit(monkeypatch) -> None:
                 }
             ],
             "mode": "lexical",
-        },
-    )
+        }
+
+    monkeypatch.setattr("app.main.answer_question", fake_answer)
     response = client.post(
         "/api/analyses/snapshot-1/ask", json={"question": "What is here?"}
     )
     assert response.status_code == 200
     assert response.json()["citations"] == []
+    assert response.json()["evidence_sufficient"] is False
+    assert "could not validate" in response.json()["answer"]
+
+
+def test_ask_uses_requested_snapshot_and_drops_nonexistent_paths_and_ranges(monkeypatch) -> None:
+    monkeypatch.setattr("app.main.get_analysis", lambda _analysis_id: _analysis_payload())
+    received = []
+
+    async def fake_answer(analysis, _question):
+        received.append((analysis.id, analysis.commit_sha))
+        return {
+            "answer": "Untrusted citations",
+            "citations": [
+                {
+                    "path": "missing.py",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "commit_sha": analysis.commit_sha,
+                },
+                {
+                    "path": "main.py",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "commit_sha": analysis.commit_sha,
+                },
+            ],
+            "mode": "lexical",
+        }
+
+    monkeypatch.setattr("app.main.answer_question", fake_answer)
+    response = client.post("/api/analyses/snapshot-1/ask", json={"question": "What is here?"})
+
+    assert response.status_code == 200
+    assert received == [("snapshot-1", "a" * 40)]
+    assert response.json()["citations"] == []
+    assert response.json()["generation_mode"] == "none"
+    assert response.json()["evidence_sufficient"] is False
+    assert "Untrusted citations" not in response.json()["answer"]
 
 
 def test_reports_escape_untrusted_markdown_and_omit_raw_source(monkeypatch) -> None:
@@ -172,8 +231,11 @@ def test_reports_escape_untrusted_markdown_and_omit_raw_source(monkeypatch) -> N
     report = client.get("/api/analyses/snapshot-1/report.md")
     assert report.status_code == 200
     assert "## Severity distribution" in report.text
+    assert "## Static analysis coverage" in report.text
+    assert "JavaScript: not analyzed" in report.text
     assert "&lt;script&gt;" in report.text
     assert "<script>" not in report.text
     json_report = client.get("/api/analyses/snapshot-1/report.json")
     assert json_report.status_code == 200
     assert "chunks" not in json_report.json()
+    assert "test-model" not in json_report.text

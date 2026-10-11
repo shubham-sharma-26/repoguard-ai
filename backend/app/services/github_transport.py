@@ -1,4 +1,4 @@
-"""HTTPX transport that validates DNS answers and connects to those exact IPs."""
+"""HTTPX transport that pins an explicit HTTPS host allowlist to validated IPs."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import httpx
 
 Resolver = Callable[[str, int], list[str]]
 Dialer = Callable[..., Any]
-logger = logging.getLogger("repoguard.github_transport")
+logger = logging.getLogger("repoguard.pinned_transport")
 
 
 def _system_resolve(host: str, port: int) -> list[str]:
@@ -76,9 +76,9 @@ class _DiagnosticStream:
         try:
             secured = await self._stream.start_tls(ssl_context, server_hostname, timeout)
         except Exception as exc:
-            logger.warning("GitHub TLS handshake or certificate verification failed (%s)", type(exc).__name__)
+            logger.warning("Outbound TLS handshake or certificate verification failed (%s)", type(exc).__name__)
             raise
-        logger.info("GitHub TLS handshake and certificate verification succeeded")
+        logger.info("Outbound TLS handshake and certificate verification succeeded")
         return _DiagnosticStream(secured)
 
 
@@ -102,7 +102,7 @@ class _PinnedNetworkBackend(httpcore.AnyIOBackend):
         socket_options: Any = None,
     ) -> httpcore.AsyncNetworkStream:
         if host.casefold() not in self._allowed_hosts or port != 443:
-            raise httpcore.ConnectError("Outbound destination is not an approved GitHub endpoint")
+            raise httpcore.ConnectError("Outbound destination is not on the approved host allowlist")
 
         started = time.monotonic()
         try:
@@ -113,10 +113,10 @@ class _PinnedNetworkBackend(httpcore.AnyIOBackend):
                 with anyio.fail_after(timeout):
                     addresses = await anyio.to_thread.run_sync(lookup, abandon_on_cancel=True)
         except TimeoutError as exc:
-            logger.warning("Approved GitHub hostname DNS lookup timed out")
+            logger.warning("Approved outbound hostname DNS lookup timed out")
             raise httpcore.ConnectTimeout("DNS resolution timed out") from exc
         except OSError as exc:
-            logger.warning("Approved GitHub hostname DNS lookup failed (%s)", type(exc).__name__)
+            logger.warning("Approved outbound hostname DNS lookup failed (%s)", type(exc).__name__)
             raise httpcore.ConnectError("DNS resolution failed") from exc
 
         # Reject the entire DNS set when any answer is unsafe. Never retry by
@@ -124,10 +124,10 @@ class _PinnedNetworkBackend(httpcore.AnyIOBackend):
         try:
             addresses = _public_addresses(addresses)
         except httpcore.ConnectError as exc:
-            logger.warning("GitHub DNS answer validation rejected the destination (%s)", type(exc).__name__)
+            logger.warning("Outbound DNS answer validation rejected the destination (%s)", type(exc).__name__)
             raise
         families = sorted({f"IPv{ipaddress.ip_address(address).version}" for address in addresses})
-        logger.info("Approved GitHub hostname resolved to %d validated address(es): %s", len(addresses), ", ".join(families))
+        logger.info("Approved outbound hostname resolved to %d validated address(es): %s", len(addresses), ", ".join(families))
         last_error: Exception | None = None
         for address in addresses:
             remaining = None if timeout is None else timeout - (time.monotonic() - started)
@@ -165,7 +165,7 @@ class _PinnedNetworkBackend(httpcore.AnyIOBackend):
 
 
 class PinnedGitHubTransport(httpx.AsyncHTTPTransport):
-    """HTTPX transport pinned to DNS-validated addresses for a host allowlist.
+    """HTTPX transport pinned to DNS-validated addresses for a fixed host allowlist.
 
     HTTPX retains the URL hostname for the Host header and TLS SNI/certificate
     checks. The httpcore network backend receives only the resolved IP literal.
@@ -206,3 +206,6 @@ class PinnedGitHubTransport(httpx.AsyncHTTPTransport):
         if authority not in {host, f"{host}:443"}:
             raise httpx.UnsupportedProtocol("GitHub URL authority is not supported")
         return await super().handle_async_request(request)
+
+
+PinnedHostTransport = PinnedGitHubTransport

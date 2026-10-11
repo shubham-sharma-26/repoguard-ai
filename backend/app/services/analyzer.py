@@ -1,7 +1,10 @@
 import ast
+import asyncio
 import json
+import logging
 import os
 import re
+import stat
 import threading
 import time
 import uuid
@@ -13,12 +16,17 @@ from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 import httpx
+import tree_sitter_javascript
 import tree_sitter_python
+import tree_sitter_typescript
 from tree_sitter import Language, Parser
 
 from app.core.config import get_settings
 from app.schemas import AnalysisResult, Chunk, FileInfo, Finding, Symbol
 from app.services.github_transport import PinnedGitHubTransport
+from app.services.rag import ProviderError, configured_provider, embed_chunks
+
+logger = logging.getLogger("repoguard.analyzer")
 
 EXTENSIONS = {
     ".py": "Python",
@@ -123,6 +131,12 @@ def _safe_archive_path(name: str, root: str) -> str | None:
     return rel if rel and not rel.startswith("../") else None
 
 
+def _is_regular_archive_entry(item: zipfile.ZipInfo) -> bool:
+    """Reject ZIP symlinks and special files; RepoGuard only indexes regular files."""
+    file_type = stat.S_IFMT(item.external_attr >> 16)
+    return file_type in (0, stat.S_IFREG)
+
+
 async def _read_bounded_archive(response: httpx.Response) -> bytes:
     parts: list[bytes] = []
     size = 0
@@ -160,6 +174,7 @@ def _run_bounded_process(args: list[str], input_text: str, timeout: int = 3) -> 
 
     process = subprocess.Popen(
         args,
+        shell=False,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -256,6 +271,89 @@ def _python_symbols(text: str, path: str) -> list[Symbol]:
     return sorted(results, key=lambda item: (item.start_line, item.name))
 
 
+def _javascript_symbols(text: str, path: str, *, typescript: bool = False) -> list[Symbol]:
+    """Extract syntax facts from JS/TS without evaluating repository source."""
+    language = (
+        tree_sitter_typescript.language_tsx()
+        if typescript and path.lower().endswith(".tsx")
+        else tree_sitter_typescript.language_typescript()
+        if typescript
+        else tree_sitter_javascript.language()
+    )
+    try:
+        parser = Parser(Language(language))
+        tree = parser.parse(text.encode("utf-8"))
+    except (TypeError, ValueError, UnicodeError):
+        return []
+    if tree.root_node.has_error:
+        return []
+
+    source = text.encode("utf-8")
+    symbols: list[Symbol] = []
+
+    def text_of(node) -> str:
+        return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+    def visit(node) -> None:
+        kind: str | None = None
+        name = node.child_by_field_name("name")
+        if node.type in {"function_declaration", "generator_function_declaration"}:
+            kind = "function"
+        elif node.type in {"class_declaration", "class"}:
+            kind = "class"
+        elif node.type == "method_definition":
+            kind = "method"
+            name = node.child_by_field_name("name") or node.child_by_field_name("property")
+        elif node.type == "import_statement":
+            source_node = node.child_by_field_name("source")
+            if source_node is None:
+                source_node = next((child for child in node.named_children if child.type == "string"), None)
+            if source_node is not None:
+                symbols.append(
+                    Symbol(
+                        name=text_of(source_node).strip("\\\"'`"),
+                        kind="import",
+                        path=path,
+                        start_line=node.start_point.row + 1,
+                        end_line=node.end_point.row + 1,
+                    )
+                )
+        elif node.type == "variable_declarator":
+            value = node.child_by_field_name("value")
+            declaration_name = node.child_by_field_name("name")
+            if value is not None and value.type in {"arrow_function", "function_expression", "generator_function"}:
+                kind = "function"
+                name = declaration_name
+        if kind and name is not None:
+            symbols.append(
+                Symbol(
+                    name=text_of(name),
+                    kind=kind,
+                    path=path,
+                    start_line=node.start_point.row + 1,
+                    end_line=node.end_point.row + 1,
+                )
+            )
+        for child in node.named_children:
+            visit(child)
+
+    visit(tree.root_node)
+    # `method_definition` is structurally distinct; its detected class ancestry is
+    # intentionally represented by kind alone, rather than inferred call edges.
+    return sorted(symbols, key=lambda item: (item.start_line, item.end_line, item.name))
+
+
+def _symbols_for_source(text: str, path: str) -> list[Symbol]:
+    extension = PurePosixPath(path).suffix.lower()
+    if extension == ".py":
+        return _python_symbols(text, path)
+    if extension in {".js", ".jsx"}:
+        return _javascript_symbols(text, path)
+    if extension in {".ts", ".tsx"}:
+        return _javascript_symbols(text, path, typescript=True)
+    return []
+
+
 def _tree_sitter_parse(text: str) -> int:
     parser = Parser(Language(tree_sitter_python.language()))
     return int(parser.parse(text.encode("utf-8")).root_node.has_error)
@@ -276,6 +374,7 @@ def _static_findings(files: list[tuple[str, str]]) -> tuple[list[Finding], dict[
         ruff_bin = find_ruff_bin()
         version = subprocess.run(
             [ruff_bin, "--version"],
+            shell=False,
             capture_output=True,
             text=True,
             timeout=3,
@@ -342,6 +441,21 @@ def _static_findings(files: list[tuple[str, str]]) -> tuple[list[Finding], dict[
     except ImportError:
         versions["bandit"] = "unavailable"
     return findings, versions
+
+
+def _analysis_coverage(
+    python_sources: list[tuple[str, str]], tools: dict[str, str]
+) -> dict[str, str]:
+    if not python_sources:
+        python_status = "no_supported_files"
+    else:
+        available = sum(tools.get(tool, "unavailable") != "unavailable" for tool in ("ruff", "bandit"))
+        python_status = "analyzed" if available == 2 else "partially_analyzed" if available else "not_analyzed"
+    return {
+        "Python": python_status,
+        "JavaScript": "not_analyzed",
+        "TypeScript": "not_analyzed",
+    }
 
 
 async def analyze_repository(raw_url: str) -> AnalysisResult:
@@ -426,6 +540,16 @@ async def analyze_repository(raw_url: str) -> AnalysisResult:
                 rel = _safe_archive_path(item.filename, root)
                 if rel is None or item.is_dir():
                     continue
+                if not _is_regular_archive_entry(item):
+                    skipped.append(
+                        FileInfo(
+                            path=rel,
+                            size=item.file_size,
+                            language="Unknown",
+                            reason_skipped="Unsupported archive entry type",
+                        )
+                    )
+                    continue
                 if item.file_size > settings.max_file_bytes:
                     skipped.append(
                         FileInfo(
@@ -497,8 +621,9 @@ async def analyze_repository(raw_url: str) -> AnalysisResult:
                 lines = text.splitlines()
                 if len(lines) > 800:
                     info.reason_skipped = "Search chunks limited to first 800 lines"
+                if ext in {".py", ".js", ".jsx", ".ts", ".tsx"}:
+                    symbols.extend(_symbols_for_source(text, rel))
                 if ext == ".py":
-                    symbols.extend(_python_symbols(text, rel))
                     _tree_sitter_parse(text)
                 # Bounded, deterministic chunks; evidence retains exact line bounds.
                 step = 80
@@ -530,6 +655,23 @@ async def analyze_repository(raw_url: str) -> AnalysisResult:
                     reason_skipped="Static analysis file limit reached",
                 )
             )
+    embedding_status = "not_configured"
+    embedding_provider = configured_provider(settings)
+    if embedding_provider:
+        try:
+            async with asyncio.timeout(settings.rag_request_timeout):
+                chunks = await embed_chunks(chunks, embedding_provider, settings)
+            embedded_count = sum(chunk.embedding is not None for chunk in chunks)
+            embedding_status = (
+                "ready"
+                if embedded_count == len(chunks) and chunks
+                else "partial"
+                if embedded_count
+                else "empty"
+            )
+        except (ProviderError, TimeoutError) as exc:
+            embedding_status = "error"
+            logger.warning("Repository embedding failed (%s)", type(exc).__name__)
     return AnalysisResult(
         id=str(uuid.uuid4()),
         owner=owner,
@@ -550,40 +692,11 @@ async def analyze_repository(raw_url: str) -> AnalysisResult:
         tool_versions={
             "python": os.sys.version.split()[0],
             "tree-sitter-python": "0.23.6",
+            "tree-sitter-javascript": "0.23.1",
+            "tree-sitter-typescript": "0.23.2",
             **tools,
         },
+        analysis_coverage=_analysis_coverage(python_sources, tools),
         duration_ms=int((time.monotonic() - started) * 1000),
+        embedding_status=embedding_status,
     )
-
-
-def answer_question(analysis: AnalysisResult, question: str) -> dict:
-    terms = {term.lower() for term in re.findall(r"[A-Za-z_][A-Za-z_0-9]{2,}", question)}
-    scored: list[tuple[int, Chunk]] = []
-    for chunk in analysis.chunks:
-        haystack = f"{chunk.path} {chunk.text}".lower()
-        score = sum(haystack.count(term) for term in terms)
-        if score:
-            scored.append((score, chunk))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    selected = [chunk for _, chunk in scored[:5]]
-    if not selected:
-        return {
-            "answer": "I could not find enough matching source evidence in this snapshot to answer confidently.",
-            "citations": [],
-            "mode": "lexical",
-        }
-    citations = [
-        {
-            "path": chunk.path,
-            "start_line": chunk.start_line,
-            "end_line": chunk.end_line,
-            "commit_sha": analysis.commit_sha,
-        }
-        for chunk in selected
-    ]
-    evidence = "\n".join(f"{c.path}:{c.start_line}-{c.end_line}" for c in selected)
-    return {
-        "answer": f"I found relevant code in {len(selected)} source section(s). Inspect {evidence}. This answer uses lexical retrieval; review the cited code before relying on an interpretation.",
-        "citations": citations,
-        "mode": "lexical",
-    }

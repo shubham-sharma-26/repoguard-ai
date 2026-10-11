@@ -1147,13 +1147,50 @@ footer span {
   font-size: 11px;
   line-height: 1.7;
 }
-.citations > div {
+.citations > .citation-link {
   display: flex;
   align-items: center;
   gap: 7px;
+  width: 100%;
   padding: 6px 0;
+  border: 0;
   border-top: 1px solid #202a39;
+  background: transparent;
   color: #97a9ca;
+  text-align: left;
+  cursor: pointer;
+}
+.citation-link:hover {
+  color: #c2d0ff;
+}
+.rag-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.rag-badges span {
+  border: 1px solid #293749;
+  border-radius: 12px;
+  padding: 3px 7px;
+  color: #9baac0;
+  font:
+    9px "DM Mono",
+    monospace;
+  text-transform: capitalize;
+}
+.provider-message {
+  display: block;
+  margin-top: 8px;
+  color: #8291a4;
+  font-size: 10px;
+}
+.citation-preview {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #293749;
+  color: #bac7db;
+  font-size: 10px;
 }
 .citations code {
   font:

@@ -264,6 +264,11 @@ def test_repository_url_forms_reject_unexpected_destinations(url) -> None:
         "https://127.0.0.1/example/project/legacy.zip/" + "a" * 40,
         "https://evil.example/example/project/legacy.zip/" + "a" * 40,
         "https://codeload.github.com/example/project/legacy.zip/" + "b" * 40,
+        "https://user:pass@codeload.github.com/example/project/legacy.zip/" + "a" * 40,
+        "https://codeload.github.com/example/project/legacy.zip/" + "a" * 40 + "?download=1",
+        "https://codeload.github.com/example/project/legacy.zip/" + "a" * 40 + "#fragment",
+        "https://codeload.github.com/example/../project/legacy.zip/" + "a" * 40,
+        "//codeload.github.com/example/project/legacy.zip/" + "a" * 40,
     ],
 )
 def test_redirects_to_prohibited_or_unpinned_destinations_are_rejected(location) -> None:
@@ -273,6 +278,11 @@ def test_redirects_to_prohibited_or_unpinned_destinations_are_rejected(location)
 
 def test_only_exact_codeload_redirect_is_accepted() -> None:
     location = "https://codeload.github.com/example/project/legacy.zip/" + "a" * 40
+    assert _validate_archive_redirect(location, "example", "project", "a" * 40) == location
+
+
+def test_codeload_redirect_owner_and_repo_comparison_is_case_insensitive() -> None:
+    location = "https://codeload.github.com/Example/Project/legacy.zip/" + "a" * 40
     assert _validate_archive_redirect(location, "example", "project", "a" * 40) == location
 
 
@@ -295,7 +305,7 @@ def test_tls_certificate_hostname_is_verified(tls_server, caplog) -> None:
     tls_server.join()
     assert tls_server.server_names == ["codeload.github.com"]
     assert tls_server.requests == []
-    assert "GitHub TLS handshake or certificate verification failed" in caplog.text
+    assert "Outbound TLS handshake or certificate verification failed" in caplog.text
 
 
 def test_dns_lookup_timeout_is_bounded(tls_server) -> None:

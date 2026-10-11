@@ -23,5 +23,7 @@ jobs:
         with: { node-version: 24, cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: npm ci
         working-directory: frontend
+      - run: npm exec -- prettier --check src
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend

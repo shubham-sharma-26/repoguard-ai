@@ -40,7 +40,9 @@ export type Analysis = {
   findings: Finding[];
   skipped: FileInfo[];
   tool_versions: Record<string, string>;
+  analysis_coverage: Record<string, string>;
   duration_ms: number;
+  embedding_status: string;
 };
 export type AnalysisSummary = Pick<
   Analysis,
@@ -59,6 +61,21 @@ export type FileContent = {
   line_count: number | null;
   chunks: { start_line: number; end_line: number; text: string }[];
   truncated: boolean;
+};
+export type QuestionAnswer = {
+  answer: string;
+  citations: {
+    path: string;
+    start_line: number;
+    end_line: number;
+    commit_sha: string;
+  }[];
+  mode: string;
+  retrieval_mode: "lexical" | "semantic" | "hybrid";
+  generation_mode: "llm" | "extractive_fallback" | "none";
+  provider_status: "ready" | "not_configured" | "error";
+  provider_message: string;
+  evidence_sufficient: boolean;
 };
 const API = "/api";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -85,16 +102,7 @@ export const api = {
       `/analyses/${id}/file-content?path=${encodeURIComponent(path)}`,
     ),
   ask: (id: string, question: string) =>
-    request<{
-      answer: string;
-      citations: {
-        path: string;
-        start_line: number;
-        end_line: number;
-        commit_sha: string;
-      }[];
-      mode: string;
-    }>(`/analyses/${id}/ask`, {
+    request<QuestionAnswer>(`/analyses/${id}/ask`, {
       method: "POST",
       body: JSON.stringify({ question }),
     }),

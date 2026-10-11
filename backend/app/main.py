@@ -19,7 +19,8 @@ from app.schemas import (
     Answer,
     QuestionRequest,
 )
-from app.services.analyzer import AnalysisError, analyze_repository, answer_question
+from app.services.analyzer import AnalysisError, analyze_repository
+from app.services.rag import answer_question
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("repoguard")
@@ -127,7 +128,9 @@ async def create_analysis(request: AnalyzeRequest) -> AnalysisSummary:
             detail="A network error interrupted GitHub analysis. Check outbound network access and retry.",
         ) from exc
     except Exception as exc:
-        logger.exception("Repository analysis failed (%s)", type(exc).__name__)
+        # Exception messages and tracebacks may contain untrusted request or provider
+        # details. Keep client-facing diagnostics useful without logging those values.
+        logger.error("Repository analysis failed (%s)", type(exc).__name__)
         raise HTTPException(
             status_code=502,
             detail="Analysis could not be completed. Check connectivity and try again.",
@@ -199,7 +202,11 @@ def file_content(analysis_id: str, path: str = Query(min_length=1, max_length=50
     file_info = next((item for item in result.files if item.path == path), None)
     if file_info is None:
         raise HTTPException(status_code=404, detail="File not found in this snapshot")
-    excerpts = [chunk.model_dump() for chunk in result.chunks if chunk.path == path][:50]
+    excerpts = [
+        chunk.model_dump(exclude={"embedding", "embedding_model"})
+        for chunk in result.chunks
+        if chunk.path == path
+    ][:50]
     return {
         "path": path,
         "line_count": file_info.line_count,
@@ -233,13 +240,14 @@ def findings(
 
 
 @app.post("/api/analyses/{analysis_id}/ask", response_model=Answer)
-def ask(analysis_id: str, request: QuestionRequest) -> Answer:
+async def ask(analysis_id: str, request: QuestionRequest) -> Answer:
     result = _load_or_404(analysis_id)
-    answer = answer_question(result, request.question)
+    answer = await answer_question(result, request.question)
     # Citation paths and ranges are checked against the pinned manifest before returning.
     manifest = {file.path for file in result.files}
     validated = []
-    for citation in answer["citations"]:
+    citations = answer["citations"]
+    for citation in citations:
         path = PurePosixPath(citation["path"])
         if path.is_absolute() or ".." in path.parts or citation["path"] not in manifest:
             continue
@@ -253,7 +261,19 @@ def ask(analysis_id: str, request: QuestionRequest) -> Answer:
             and citation["end_line"] <= file_data.line_count
         ):
             validated.append(citation)
-    answer["citations"] = validated
+    if citations and len(validated) != len(citations):
+        answer.update(
+            {
+                "answer": "I could not validate the retrieved citations against this snapshot, so I cannot provide a grounded answer.",
+                "citations": [],
+                "generation_mode": "none",
+                "provider_status": "error",
+                "provider_message": "Citation validation failed against the selected repository snapshot.",
+                "evidence_sufficient": False,
+            }
+        )
+    else:
+        answer["citations"] = validated
     return Answer.model_validate(answer)
 
 
@@ -290,6 +310,11 @@ def markdown_report(analysis_id: str) -> Response:
     rows.extend(
         f"- {escape_markdown(tool)}: `{escape_markdown(version)}`"
         for tool, version in sorted(result.tool_versions.items())
+    )
+    rows.extend(["", "## Static analysis coverage", ""])
+    rows.extend(
+        f"- {escape_markdown(language)}: {escape_markdown(status.replace('_', ' '))}"
+        for language, status in sorted(result.analysis_coverage.items())
     )
     rows.extend(["", "## Severity distribution", ""])
     if severities:

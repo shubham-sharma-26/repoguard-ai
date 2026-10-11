@@ -18,7 +18,7 @@ class FileInfo(BaseModel):
 
 class Symbol(BaseModel):
     name: str
-    kind: Literal["function", "class", "import", "definition"]
+    kind: Literal["function", "class", "method", "import", "definition"]
     path: str
     start_line: int
     end_line: int
@@ -45,6 +45,8 @@ class Chunk(BaseModel):
     end_line: int
     symbol: str | None = None
     text: str
+    embedding: list[float] | None = None
+    embedding_model: str | None = None
 
 
 class AnalysisResult(BaseModel):
@@ -65,7 +67,9 @@ class AnalysisResult(BaseModel):
     chunks: list[Chunk]
     skipped: list[FileInfo]
     tool_versions: dict[str, str]
+    analysis_coverage: dict[str, str] = Field(default_factory=dict)
     duration_ms: int
+    embedding_status: str = "not_configured"
 
 
 class AnalysisSummary(BaseModel):
@@ -98,7 +102,9 @@ class AnalysisView(BaseModel):
     findings: list[Finding]
     skipped: list[FileInfo]
     tool_versions: dict[str, str]
+    analysis_coverage: dict[str, str] = Field(default_factory=dict)
     duration_ms: int
+    embedding_status: str = "not_configured"
 
 
 class QuestionRequest(BaseModel):
@@ -116,3 +122,8 @@ class Answer(BaseModel):
     answer: str
     citations: list[Citation]
     mode: str = "lexical"
+    retrieval_mode: str = "lexical"
+    generation_mode: str = "extractive_fallback"
+    provider_status: str = "not_configured"
+    provider_message: str = "AI provider is not configured."
+    evidence_sufficient: bool = False

@@ -28,19 +28,37 @@ import {
   AnalysisSummary,
   api,
   Finding,
+  FileContent,
+  QuestionAnswer,
 } from "./types";
+
+function describeRequestError(error: unknown, fallback: string): string {
+  if (error instanceof TypeError) {
+    return "Could not connect to the local RepoGuard API. Check that the backend is running at http://127.0.0.1:8001.";
+  }
+  return error instanceof Error ? error.message : fallback;
+}
 
 function App() {
   const [history, setHistory] = useState<AnalysisSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [url, setUrl] = useState("");
   const navigate = useNavigate();
-  const refresh = () =>
-    api
-      .history()
-      .then(setHistory)
-      .catch(() => setHistory([]));
+  const refresh = async () => {
+    try {
+      setHistory(await api.history());
+      setHistoryError("");
+    } catch (e) {
+      setHistoryError(
+        describeRequestError(e, "Could not load saved analyses."),
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
   useEffect(() => {
     void refresh();
   }, []);
@@ -51,9 +69,10 @@ function App() {
     try {
       const result = await api.analyze(url);
       setHistory((items) => [result, ...items]);
+      setHistoryError("");
       navigate(`/analysis/${result.id}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Analysis failed");
+      setError(describeRequestError(e, "Analysis failed"));
     } finally {
       setLoading(false);
     }
@@ -80,7 +99,7 @@ function App() {
         <div className="side-label nav-gap">TOOLS</div>
         <a
           className="nav-item"
-          href="http://localhost:8000/docs"
+          href="http://localhost:8001/docs"
           target="_blank"
           rel="noreferrer"
         >
@@ -124,6 +143,9 @@ function App() {
                 submit={submit}
                 loading={loading}
                 error={error}
+                historyError={historyError}
+                historyLoading={historyLoading}
+                refreshHistory={() => void refresh()}
               />
             }
           />
@@ -138,6 +160,9 @@ function App() {
                 submit={submit}
                 loading={loading}
                 error={error}
+                historyError={historyError}
+                historyLoading={historyLoading}
+                refreshHistory={() => void refresh()}
               />
             }
           />
@@ -154,6 +179,9 @@ function Home({
   submit,
   loading,
   error,
+  historyError,
+  historyLoading,
+  refreshHistory,
 }: {
   history: AnalysisSummary[];
   url: string;
@@ -161,6 +189,9 @@ function Home({
   submit: (e: FormEvent) => void;
   loading: boolean;
   error: string;
+  historyError: string;
+  historyLoading: boolean;
+  refreshHistory: () => void;
 }) {
   const totalFiles = history.reduce((sum, item) => sum + item.file_count, 0);
   const totalFindings = history.reduce(
@@ -223,20 +254,28 @@ function Home({
         <Stat
           icon={<FolderGit2 />}
           label="Repositories analyzed"
-          value={history.length.toString()}
-          detail="saved locally"
+          value={
+            historyError || historyLoading ? "—" : history.length.toString()
+          }
+          detail={historyError ? "history unavailable" : "saved locally"}
         />
         <Stat
           icon={<FileCode2 />}
           label="Files indexed"
-          value={totalFiles.toLocaleString()}
-          detail="across analyses"
+          value={
+            historyError || historyLoading ? "—" : totalFiles.toLocaleString()
+          }
+          detail={historyError ? "history unavailable" : "across analyses"}
         />
         <Stat
           icon={<ShieldAlert />}
           label="Findings detected"
-          value={totalFindings.toLocaleString()}
-          detail="tool-reported"
+          value={
+            historyError || historyLoading
+              ? "—"
+              : totalFindings.toLocaleString()
+          }
+          detail={historyError ? "history unavailable" : "tool-reported"}
         />
       </section>
       <section id="recent" className="recent-section">
@@ -246,10 +285,28 @@ function Home({
             <p>Your repository snapshots, pinned to their analyzed commits.</p>
           </div>
           <span className="count-badge">
-            {history.length} {history.length === 1 ? "analysis" : "analyses"}
+            {historyLoading && history.length === 0
+              ? "Loading…"
+              : historyError && history.length === 0
+                ? "Unavailable"
+                : `${history.length} ${history.length === 1 ? "analysis" : "analyses"}`}
           </span>
         </div>
-        {history.length === 0 ? (
+        {historyError && (
+          <div className="error-message" role="alert">
+            <ShieldAlert size={15} />
+            Could not load saved analysis history: {historyError}
+            <button type="button" onClick={refreshHistory}>
+              Retry
+            </button>
+          </div>
+        )}
+        {historyLoading && history.length === 0 ? (
+          <div className="empty-state" role="status">
+            <LoaderCircle className="spin" /> Loading saved analyses…
+          </div>
+        ) : history.length === 0 && historyError ? null : history.length ===
+          0 ? (
           <div className="empty-state">
             <div className="empty-icon">
               <Code2 size={23} />
@@ -375,16 +432,11 @@ function AnalysisPage() {
   const [tab, setTab] = useState("overview");
   const [filter, setFilter] = useState("");
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState<{
-    answer: string;
-    citations: {
-      path: string;
-      start_line: number;
-      end_line: number;
-      commit_sha: string;
-    }[];
-    mode: string;
-  } | null>(null);
+  const [answer, setAnswer] = useState<QuestionAnswer | null>(null);
+  const [citationPreview, setCitationPreview] = useState<FileContent | null>(
+    null,
+  );
+  const [citationError, setCitationError] = useState("");
   const [asking, setAsking] = useState(false);
   useEffect(() => {
     api
@@ -424,6 +476,15 @@ function AnalysisPage() {
     ["findings", "Findings"],
     ["ask", "Ask RepoGuard"],
   ];
+  async function openCitation(path: string) {
+    setCitationPreview(null);
+    setCitationError("");
+    try {
+      setCitationPreview(await api.fileContent(id, path));
+    } catch (e) {
+      setCitationError(describeRequestError(e, "Could not load cited source"));
+    }
+  }
   async function ask(e: FormEvent) {
     e.preventDefault();
     setAsking(true);
@@ -431,9 +492,14 @@ function AnalysisPage() {
       setAnswer(await api.ask(id, question));
     } catch (e) {
       setAnswer({
-        answer: e instanceof Error ? e.message : "Request failed",
+        answer: describeRequestError(e, "Request failed"),
         citations: [],
         mode: "error",
+        retrieval_mode: "lexical",
+        generation_mode: "none",
+        provider_status: "error",
+        provider_message: "The Q&A request failed.",
+        evidence_sufficient: false,
       });
     } finally {
       setAsking(false);
@@ -571,6 +637,15 @@ function AnalysisPage() {
                 label="Bandit"
                 value={analysis.tool_versions.bandit ?? "unavailable"}
               />
+              {Object.entries(analysis.analysis_coverage ?? {}).map(
+                ([language, status]) => (
+                  <Detail
+                    key={language}
+                    label={`${language} analysis`}
+                    value={status.replaceAll("_", " ")}
+                  />
+                ),
+              )}
             </section>
           </div>
           <div className="notice">
@@ -600,14 +675,21 @@ function AnalysisPage() {
           <div className="panel-title">
             <div>
               <h3>Code structure</h3>
-              <p>Python AST symbols with source line ranges</p>
+              <p>
+                Python AST and JavaScript/TypeScript syntax symbols with source
+                lines
+              </p>
             </div>
             <span className="count-badge">
               {analysis.symbols.length} symbols
             </span>
           </div>
           {analysis.symbols.length === 0 ? (
-            <Empty>No Python symbols were found in this snapshot.</Empty>
+            <Empty>
+              No symbols were extracted from supported Python, JavaScript, or
+              TypeScript files. Unsupported and malformed files are skipped
+              safely.
+            </Empty>
           ) : (
             <div className="symbol-list">
               {analysis.symbols.map((s, i) => (
@@ -644,7 +726,18 @@ function AnalysisPage() {
             </div>
           </div>
           {findings.length === 0 ? (
-            <Empty>No tool findings match this filter.</Empty>
+            <Empty>
+              {filter
+                ? "No findings match this filter."
+                : `No findings were reported for analyzed languages. Coverage: ${
+                    Object.entries(analysis.analysis_coverage ?? {})
+                      .map(
+                        ([language, status]) =>
+                          `${language}: ${status.replaceAll("_", " ")}`,
+                      )
+                      .join(" · ") || "not reported"
+                  }.`}
+            </Empty>
           ) : (
             <div className="finding-list">
               {findings.map((f, i) => (
@@ -663,11 +756,13 @@ function AnalysisPage() {
                   <Bot size={18} /> Ask about this repository
                 </h3>
                 <p>
-                  Answers use lexical retrieval over this exact commit snapshot.
+                  Optional embeddings and generation work on this pinned
+                  snapshot. Source excerpts are sent to OpenAI only when its
+                  provider key is configured.
                 </p>
               </div>
               <span className="local-pill">
-                <span /> LEXICAL
+                <span /> {analysis.embedding_status.toUpperCase()} EMBEDDINGS
               </span>
             </div>
             <div className="chat-empty">
@@ -685,16 +780,55 @@ function AnalysisPage() {
                 <div className="answer-label">
                   <Sparkles size={14} /> REPOGUARD RESPONSE
                 </div>
+                <div className="rag-badges" aria-live="polite">
+                  <span>Retrieval: {answer.retrieval_mode}</span>
+                  <span>
+                    Generation: {answer.generation_mode.replaceAll("_", " ")}
+                  </span>
+                  <span>
+                    Provider: {answer.provider_status.replaceAll("_", " ")}
+                  </span>
+                  {!answer.evidence_sufficient && (
+                    <span>Insufficient evidence</span>
+                  )}
+                </div>
+                <small className="provider-message">
+                  {answer.provider_message}
+                </small>
                 <p>{answer.answer}</p>
                 {answer.citations.length > 0 && (
                   <div className="citations">
                     {answer.citations.map((c, i) => (
-                      <div key={i}>
+                      <button
+                        type="button"
+                        className="citation-link"
+                        key={`${c.path}-${c.start_line}-${i}`}
+                        onClick={() => void openCitation(c.path)}
+                      >
                         <FileCode2 size={14} />
                         <code>
                           {c.path}:{c.start_line}-{c.end_line}
                         </code>
                         <small>{c.commit_sha.slice(0, 8)}</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {citationError && (
+                  <p className="preview-note">{citationError}</p>
+                )}
+                {citationPreview && (
+                  <div className="citation-preview">
+                    <strong>{citationPreview.path}</strong>
+                    {citationPreview.chunks.map((chunk) => (
+                      <div
+                        className="source-chunk"
+                        key={`${chunk.start_line}-${chunk.end_line}`}
+                      >
+                        <small>
+                          Lines {chunk.start_line}–{chunk.end_line}
+                        </small>
+                        <pre>{chunk.text}</pre>
                       </div>
                     ))}
                   </div>
